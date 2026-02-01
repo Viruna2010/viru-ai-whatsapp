@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers } = require("@whiskeysockets/baileys");
 const axios = require("axios");
 const pino = require("pino");
 const express = require("express");
@@ -6,35 +6,32 @@ const express = require("express");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Render එක ලයිව් තියාගන්න පාවිච්චි කරන Route එක
-app.get("/", (req, res) => res.send("Viru-AI Bot is Active! 🚀"));
-app.listen(port, () => console.log(`Server is running on port ${port}`));
+app.get("/", (req, res) => res.send("Viru-AI Bot is Running! 🚀"));
+app.listen(port, () => console.log(`Server listening on port ${port}`));
 
 async function startViruBot() {
-    // Render Environment Variables වලින් Session එක ගන්නවා (Restart වුණාම ලොගින් වෙන්න ඕනේ නැති වෙන්න)
-    const sessionString = process.env.SESSION_ID;
     const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_info');
+    const sessionString = process.env.SESSION_ID;
 
-    // පරණ Session එකක් තිබුණොත් ඒක ලෝඩ් කරනවා
     if (sessionString) {
         try {
-            const creds = JSON.parse(Buffer.from(sessionString, 'base64').toString());
-            state.creds = creds;
+            state.creds = JSON.parse(Buffer.from(sessionString, 'base64').toString());
         } catch (e) {
-            console.log("Session ID Error:", e);
+            console.log("Session ID Load Error");
         }
     }
 
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: "fatal" }),
-        browser: ["Viru-AI", "Chrome", "1.0.0"]
+        logger: pino({ level: "silent" }),
+        browser: Browsers.macOS("Desktop"),
+        shouldIgnoreOldMessages: true
     });
 
-    // 1. WhatsApp අංකය ලින්ක් කිරීම (Pairing Code)
+    // 🚀 අලුත් අංකයට Pairing Code එක ඉල්ලීම
     if (!sock.authState.creds.registered) {
-        const myNumber = "94788120118"; // 👈 උඹේ අංකය මෙතන තියෙනවා
+        const myNumber = "94765852011"; // 👈 අලුත් අංකය මෙතන තියෙනවා
         
         setTimeout(async () => {
             try {
@@ -43,19 +40,17 @@ async function startViruBot() {
                 console.log("👉 YOUR WHATSAPP PAIRING CODE:", code);
                 console.log("========================================\n");
             } catch (err) {
-                console.log("Pairing Code Error:", err);
+                console.log("Pairing Code Error: ", err.message);
             }
-        }, 5000);
+        }, 10000); // තත්පර 10ක් දුන්නා කනෙක්ෂන් එක හැදෙන්න
     }
 
-    // 2. ලොග් වුණාම Session String එක Logs වල පෙන්වනවා
     sock.ev.on('creds.update', async () => {
         await saveCreds();
         const credsString = Buffer.from(JSON.stringify(state.creds)).toString('base64');
         console.log("\n🔥🔥 COPY THIS TO RENDER 'SESSION_ID' VARIABLE:\n", credsString);
     });
 
-    // 3. මැසේජ් එකක් ආවම API එකට යැවීම
     sock.ev.on('messages.upsert', async m => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
@@ -65,15 +60,12 @@ async function startViruBot() {
 
         if (userText) {
             try {
-                // 🚀 උඹේ Vercel AI API එකට මැසේජ් එක යවනවා
+                // Vercel AI API එකට යවනවා
                 const response = await axios.post('https://viru-ai-api.vercel.app/api/chat', {
                     prompt: userText 
                 });
 
-                // API එකෙන් එන Reply එක ගන්නවා
-                const aiText = response.data.reply || response.data.response || response.data.message || "සොරි මචං, මට රිප්ලයි එකක් ගන්න බැරි වුණා.";
-                
-                // ✅ WhatsApp එකට AI රිප්ලයි එක යවනවා
+                const aiText = response.data.reply || response.data.response || response.data.message || "No reply from AI";
                 await sock.sendMessage(sender, { text: aiText });
             } catch (error) {
                 console.log("API Error:", error.message);
@@ -83,7 +75,7 @@ async function startViruBot() {
 
     sock.ev.on('connection.update', (update) => {
         const { connection } = update;
-        if (connection === 'close') startViruBot(); // Connection එක කැපුණොත් ආයේ පටන් ගන්නවා
+        if (connection === 'close') startViruBot();
     });
 }
 
