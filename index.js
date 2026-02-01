@@ -1,54 +1,57 @@
-const { default: makeWASocket, useMultiFileAuthState, Browsers } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers, delay } = require("@whiskeysockets/baileys");
 const axios = require("axios");
 const pino = require("pino");
 const express = require("express");
+const QRCode = require('qrcode-terminal'); // QR එක පේන්න ඕනේ නිසා
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.get("/", (req, res) => res.send("Viru-AI Bot is Running! 🚀"));
-app.listen(port, () => console.log(`Server listening on port ${port}`));
+app.listen(port);
 
 async function startViruBot() {
+    // /tmp පාවිච්චි කරන්නේ Render එකේ RAM එක ඉතුරු කරන්න
     const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_info');
     const sessionString = process.env.SESSION_ID;
 
     if (sessionString) {
         try {
             state.creds = JSON.parse(Buffer.from(sessionString, 'base64').toString());
-        } catch (e) {
-            console.log("Session ID Load Error");
-        }
+        } catch (e) { console.log("Session Load Error"); }
     }
 
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
+        // QR එක logs වල පේන්න මේක true කළා
+        printQRInTerminal: true, 
         logger: pino({ level: "silent" }),
         browser: Browsers.macOS("Desktop"),
         shouldIgnoreOldMessages: true
     });
 
-    // 🚀 අලුත් අංකයට Pairing Code එක ඉල්ලීම
-    if (!sock.authState.creds.registered) {
-        const myNumber = "94765852011"; // 👈 අලුත් අංකය මෙතන තියෙනවා
+    // QR Code එක logs වල පෙන්වන තැන
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
         
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode(myNumber);
-                console.log("\n========================================");
-                console.log("👉 YOUR WHATSAPP PAIRING CODE:", code);
-                console.log("========================================\n");
-            } catch (err) {
-                console.log("Pairing Code Error: ", err.message);
-            }
-        }, 10000); // තත්පර 10ක් දුන්නා කනෙක්ෂන් එක හැදෙන්න
-    }
+        if (qr) {
+            console.log("\n📷 මෙන්න QR Code එක! මේක දැන්ම WhatsApp එකෙන් Scan කරපන්:");
+            // QR එක Terminal එකේ ලස්සනට පෙන්වන්න
+            QRCode.generate(qr, { small: true });
+        }
+
+        if (connection === 'close') {
+            console.log("Connection closed, reconnecting...");
+            startViruBot();
+        } else if (connection === 'open') {
+            console.log("✅ Bot Connected Successfully!");
+        }
+    });
 
     sock.ev.on('creds.update', async () => {
         await saveCreds();
         const credsString = Buffer.from(JSON.stringify(state.creds)).toString('base64');
-        console.log("\n🔥🔥 COPY THIS TO RENDER 'SESSION_ID' VARIABLE:\n", credsString);
+        console.log("\n🔥🔥 SESSION_ID (මේක Render එකේ සේව් කරපන්):\n", credsString);
     });
 
     sock.ev.on('messages.upsert', async m => {
@@ -56,26 +59,13 @@ async function startViruBot() {
         if (!msg.message || msg.key.fromMe) return;
 
         const userText = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        const sender = msg.key.remoteJid;
-
         if (userText) {
             try {
-                // Vercel AI API එකට යවනවා
-                const response = await axios.post('https://viru-ai-api.vercel.app/api/chat', {
-                    prompt: userText 
-                });
-
-                const aiText = response.data.reply || response.data.response || response.data.message || "No reply from AI";
-                await sock.sendMessage(sender, { text: aiText });
-            } catch (error) {
-                console.log("API Error:", error.message);
-            }
+                const response = await axios.post('https://viru-ai-api.vercel.app/api/chat', { prompt: userText });
+                const aiText = response.data.reply || response.data.response || response.data.message;
+                await sock.sendMessage(msg.key.remoteJid, { text: aiText });
+            } catch (error) { console.log("API Error"); }
         }
-    });
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection } = update;
-        if (connection === 'close') startViruBot();
     });
 }
 
